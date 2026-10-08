@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from inventory.handlers import handle_order_placed, handle_payment_failed
-from inventory.models import Product, Reservation
+from inventory.models import ProcessedEvent, Product, Reservation
 from tests.conftest import event
 
 
@@ -129,3 +129,14 @@ def test_a_payment_failure_without_a_reservation_changes_nothing(session: Sessio
     handle_payment_failed(session, payment_failed("o-unknown"))
 
     assert stock(session, "BOOK-1") == 10
+
+
+def test_a_payment_failure_is_recorded_as_handled(
+    session: Session, publisher: InMemoryEventPublisher
+) -> None:
+    handle_order_placed(session, order_placed(("BOOK-1", 2)), publisher)
+    envelope = payment_failed()
+
+    handle_payment_failed(session, envelope)
+
+    assert session.get(ProcessedEvent, envelope["event_id"]) is not None
