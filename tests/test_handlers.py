@@ -4,7 +4,7 @@ from shop_contracts.messaging import InMemoryEventPublisher
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from inventory.handlers import handle_order_placed
+from inventory.handlers import handle_order_placed, handle_payment_failed
 from inventory.models import Product, Reservation
 from tests.conftest import event
 
@@ -84,3 +84,48 @@ def test_a_redelivered_event_reserves_once(
 
     assert stock(session, "BOOK-1") == 8
     assert len(publisher.published) == 1
+
+
+def test_a_redelivered_rejected_order_is_announced_once(
+    session: Session, publisher: InMemoryEventPublisher
+) -> None:
+    envelope = order_placed(("BOOK-1", 11))
+
+    handle_order_placed(session, envelope, publisher)
+    handle_order_placed(session, envelope, publisher)
+
+    assert [e["type"] for e in publisher.published] == ["StockRejected"]
+
+
+def payment_failed(order_id: str = "o-1") -> dict[str, Any]:
+    return event("PaymentFailed", {"order_id": order_id, "reason": "amount over limit"})
+
+
+def test_a_failed_payment_gives_the_reserved_stock_back(
+    session: Session, publisher: InMemoryEventPublisher
+) -> None:
+    handle_order_placed(session, order_placed(("BOOK-1", 2), ("PEN-1", 5)), publisher)
+
+    handle_payment_failed(session, payment_failed())
+
+    assert stock(session, "BOOK-1") == 10
+    assert stock(session, "PEN-1") == 100
+    assert reservations(session) == []
+
+
+def test_a_redelivered_payment_failure_gives_the_stock_back_once(
+    session: Session, publisher: InMemoryEventPublisher
+) -> None:
+    handle_order_placed(session, order_placed(("BOOK-1", 2)), publisher)
+    envelope = payment_failed()
+
+    handle_payment_failed(session, envelope)
+    handle_payment_failed(session, envelope)
+
+    assert stock(session, "BOOK-1") == 10
+
+
+def test_a_payment_failure_without_a_reservation_changes_nothing(session: Session) -> None:
+    handle_payment_failed(session, payment_failed("o-unknown"))
+
+    assert stock(session, "BOOK-1") == 10

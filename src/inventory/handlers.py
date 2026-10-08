@@ -46,3 +46,18 @@ def handle_order_placed(
         ),
         key=order_id,
     )
+
+
+def handle_payment_failed(session: Session, envelope: dict[str, Any]) -> None:
+    """Give back the stock reserved for an order whose payment failed.
+
+    Deleting the reservations makes a redelivered event harmless: it finds none to release.
+    """
+    order_id = envelope["data"]["order_id"]
+    held = list(session.scalars(select(Reservation).where(Reservation.order_id == order_id)))
+    for reservation in held:
+        product = session.get(Product, reservation.sku)
+        if product is not None:
+            product.stock += reservation.quantity
+        session.delete(reservation)
+    session.commit()
