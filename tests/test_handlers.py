@@ -1,11 +1,11 @@
 from typing import Any
 
 from shop_contracts.messaging import InMemoryEventPublisher
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from inventory.handlers import handle_order_placed, handle_payment_failed
-from inventory.models import ProcessedEvent, Product, Reservation
+from inventory.handlers import handle_order_cancelled, handle_order_placed, handle_payment_failed
+from inventory.models import CancelledOrder, ProcessedEvent, Product, Reservation
 from tests.conftest import event
 
 
@@ -140,3 +140,80 @@ def test_a_payment_failure_is_recorded_as_handled(
     handle_payment_failed(session, envelope)
 
     assert session.get(ProcessedEvent, envelope["event_id"]) is not None
+
+
+def order_cancelled(order_id: str = "o-1") -> dict[str, Any]:
+    return event("OrderCancelled", {"order_id": order_id})
+
+
+def test_cancelling_a_reserved_order_gives_every_line_back(
+    session: Session, publisher: InMemoryEventPublisher
+) -> None:
+    handle_order_placed(session, order_placed(("BOOK-1", 2), ("PEN-1", 5)), publisher)
+    publisher.published.clear()
+
+    handle_order_cancelled(session, order_cancelled())
+
+    assert stock(session, "BOOK-1") == 10
+    assert stock(session, "PEN-1") == 100
+    assert reservations(session) == []
+    assert session.get(CancelledOrder, "o-1") is not None
+    assert publisher.published == []
+
+
+def test_a_cancel_before_the_order_arrives_means_nothing_is_ever_reserved(
+    session: Session, publisher: InMemoryEventPublisher
+) -> None:
+    handle_order_cancelled(session, order_cancelled())
+    late = order_placed(("BOOK-1", 2), ("PEN-1", 5))
+
+    handle_order_placed(session, late, publisher)
+
+    assert stock(session, "BOOK-1") == 10
+    assert stock(session, "PEN-1") == 100
+    assert reservations(session) == []
+    assert publisher.published == []
+    assert session.get(ProcessedEvent, late["event_id"]) is not None
+
+
+def test_a_redelivered_cancel_gives_the_stock_back_once(
+    session: Session, publisher: InMemoryEventPublisher
+) -> None:
+    handle_order_placed(session, order_placed(("BOOK-1", 2)), publisher)
+    envelope = order_cancelled()
+
+    handle_order_cancelled(session, envelope)
+    handle_order_cancelled(session, envelope)
+
+    assert stock(session, "BOOK-1") == 10
+
+
+def test_cancelling_again_changes_nothing(
+    session: Session, publisher: InMemoryEventPublisher
+) -> None:
+    handle_order_placed(session, order_placed(("BOOK-1", 2)), publisher)
+
+    handle_order_cancelled(session, order_cancelled())
+    handle_order_cancelled(session, order_cancelled())
+
+    assert stock(session, "BOOK-1") == 10
+    assert session.scalar(select(func.count()).select_from(CancelledOrder)) == 1
+
+
+def test_cancelling_an_order_without_reservations_only_remembers_it(session: Session) -> None:
+    handle_order_cancelled(session, order_cancelled("o-unknown"))
+
+    assert stock(session, "BOOK-1") == 10
+    assert session.get(CancelledOrder, "o-unknown") is not None
+
+
+def test_a_payment_failure_and_a_cancel_give_the_stock_back_once(
+    session: Session, publisher: InMemoryEventPublisher
+) -> None:
+    handle_order_placed(session, order_placed(("BOOK-1", 2), ("PEN-1", 5)), publisher)
+
+    handle_payment_failed(session, payment_failed())
+    handle_order_cancelled(session, order_cancelled())
+
+    assert stock(session, "BOOK-1") == 10
+    assert stock(session, "PEN-1") == 100

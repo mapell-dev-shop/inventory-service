@@ -23,6 +23,14 @@ class Reservation(Base):
     quantity: Mapped[int]
 
 
+class CancelledOrder(Base):
+    """Orders cancelled by the customer, so a late OrderPlaced never reserves stock for them."""
+
+    __tablename__ = "cancelled_orders"
+
+    order_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+
 class ProcessedEvent(Base):
     """Ids of events already handled, so a redelivered event changes nothing."""
 

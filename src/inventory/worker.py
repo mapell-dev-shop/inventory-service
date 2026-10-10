@@ -6,7 +6,7 @@ from shop_contracts.messaging import KafkaEventPublisher, run_consumer
 
 from inventory import settings
 from inventory.db import SessionLocal
-from inventory.handlers import handle_order_placed, handle_payment_failed
+from inventory.handlers import handle_order_cancelled, handle_order_placed, handle_payment_failed
 
 
 def main() -> None:
@@ -20,10 +20,18 @@ def main() -> None:
         with SessionLocal() as session:
             handle_payment_failed(session, envelope)
 
+    def on_order_cancelled(envelope: dict[str, Any]) -> None:
+        with SessionLocal() as session:
+            handle_order_cancelled(session, envelope)
+
     run_consumer(
         settings.KAFKA_BOOTSTRAP_SERVERS,
         "inventory-service",
-        {"OrderPlaced": on_order_placed, "PaymentFailed": on_payment_failed},
+        {
+            "OrderPlaced": on_order_placed,
+            "PaymentFailed": on_payment_failed,
+            "OrderCancelled": on_order_cancelled,
+        },
     )
 
 
