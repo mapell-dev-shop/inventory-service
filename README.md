@@ -30,3 +30,4 @@ The inventory bounded context of the shop: products, their stock, and the stock 
 
 * The event is published after the database commit. If publishing fails or the process dies in between, the reservation exists and nobody hears about it. A failed publish stops the worker with an error.
 * Run one worker at a time: two workers could both read the same stock level and oversell, and a late `OrderPlaced` is refused only because one worker handles it after the `OrderCancelled`.
+* Out of scope for cancelling: authentication on cancel, cancelling part of an order, failing refunds, and a cutoff after which an order can no longer be cancelled (overselling is covered above).
